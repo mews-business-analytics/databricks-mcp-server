@@ -1,8 +1,10 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 import os
 import asyncio
 import httpx
 from dotenv import load_dotenv
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.catalog import TableType
 
 # Load environment variables from .env file
 load_dotenv()
@@ -11,6 +13,8 @@ load_dotenv()
 DATABRICKS_HOST = os.environ.get("DATABRICKS_HOST", "")
 DATABRICKS_TOKEN = os.environ.get("DATABRICKS_TOKEN", "")
 DATABRICKS_SQL_WAREHOUSE_ID = os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID", "")
+
+w = WorkspaceClient()
 
 # API endpoints
 STATEMENTS_API = "/api/2.0/sql/statements"
@@ -96,4 +100,45 @@ async def execute_statement(sql: str, warehouse_id: Optional[str] = None) -> Dic
         await asyncio.sleep(10)
         retry_count += 1
     
-    raise Exception("Statement execution timed out") 
+    raise Exception("Statement execution timed out")
+
+
+async def list_databricks_views_sdk(catalog_name: str, schema_name: str) -> Dict[str, Any]:
+    """List views in a schema using Databricks SDK and format for query_formatter."""
+    views_data = []
+    try:
+        # Iterate over TableInfo objects returned by w.tables.list
+        all_tables_and_views = w.tables.list(catalog_name=catalog_name, schema_name=schema_name)
+        for item in all_tables_and_views:
+            if item.table_type == TableType.VIEW:
+                views_data.append([
+                    item.name if item.name else "",
+                    item.catalog_name if item.catalog_name else "",
+                    item.schema_name if item.schema_name else "",
+                    str(item.table_type.value) if item.table_type else "", 
+                    item.comment if item.comment else ""
+                ])
+    except Exception as e:
+        return {
+            "manifest": {"schema": {"columns": [{"name": "Error"}]}},
+            "result": {"data_array": [[f"Error listing views from SDK: {str(e)}"]]}
+        }
+
+    column_schema = [
+        {"name": "Name"},
+        {"name": "Catalog"},
+        {"name": "Schema"},
+        {"name": "Type"},
+        {"name": "Comment"}
+    ]
+    
+    if not views_data: # Handle case where no views are found
+        return {
+            "manifest": {"schema": {"columns": column_schema}},
+            "result": {"data_array": []} # Pass empty list not None
+        }
+
+    return {
+        "manifest": {"schema": {"columns": column_schema}},
+        "result": {"data_array": views_data}
+    } 
